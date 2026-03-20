@@ -1,0 +1,26 @@
+# Telegram Bot
+python-telegram-bot==21.5
+
+# MongoDB
+motor==3.6.0
+
+# AI / LangChain + Mistral
+langchain>=0.3.0
+langchain-mistralai>=0.2.0
+langchain-community>=0.3.0
+langchain-core>=0.3.0
+
+# Web Framework
+fastapi==0.115.6
+uvicorn==0.34.0
+
+# Utilities
+pydantic==2.10.4
+python-dotenv==1.0.1
+python-multipart==0.0.20
+aiofiles==24.1.0
+httpx==0.28.1
+
+# QR Code Generation
+qrcode==7.4.2
+Pillow==11.1.0

@@ -1,0 +1,224 @@
+    import { useState } from 'react'
+    import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+    import { Filter, Eye, Check, X, Clock, CheckCircle, XCircle } from 'lucide-react'
+    import { GlassCard } from '../components/GlassCard'
+    import { GlassModal } from '../components/GlassModal'
+    import { api } from '../lib/api'
+
+    const API_BASE = 'http://localhost:8000'
+
+    export const Registrations: React.FC = () => {
+    const [statusFilter, setStatusFilter] = useState<string>('')
+    const [selectedReg, setSelectedReg] = useState<any>(null)
+    const queryClient = useQueryClient()
+
+    const { data: registrations, isLoading } = useQuery({
+        queryKey: ['registrations', statusFilter],
+        queryFn: () => api.getRegistrations(statusFilter || undefined),
+        refetchInterval: 30000,
+    })
+
+    const approveMutation = useMutation({
+        mutationFn: api.approveRegistration,
+        onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['registrations'] })
+        queryClient.invalidateQueries({ queryKey: ['courses'] })
+        queryClient.invalidateQueries({ queryKey: ['stats'] })
+        setSelectedReg(null)
+        },
+    })
+
+    const rejectMutation = useMutation({
+        mutationFn: api.rejectRegistration,
+        onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['registrations'] })
+        queryClient.invalidateQueries({ queryKey: ['stats'] })
+        setSelectedReg(null)
+        },
+    })
+
+    const getStatusBadge = (status: string) => {
+        const styles = {
+        pending: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+        approved: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+        rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+        }
+        const icons = {
+        pending: Clock,
+        approved: CheckCircle,
+        rejected: XCircle,
+        }
+        const Icon = icons[status as keyof typeof icons] || Clock
+        return (
+        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm ${styles[status as keyof typeof styles]}`}>
+            <Icon className="w-4 h-4" />
+            {status.charAt(0).toUpperCase() + status.slice(1)}
+        </span>
+        )
+    }
+
+    return (
+        <div>
+        <div className="flex items-center justify-between mb-8">
+            <h1 className="text-3xl font-bold dark:text-white">Registrations</h1>
+            <div className="flex items-center gap-2">
+            <Filter className="w-5 h-5 text-gray-500" />
+            <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="input-field w-auto"
+            >
+                <option value="">All</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+            </select>
+            </div>
+        </div>
+
+        {isLoading ? (
+            <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+                <div key={`skeleton-${i}`} className="skeleton h-24 rounded-3xl" />
+            ))}
+            </div>
+        ) : registrations?.length === 0 ? (
+            <GlassCard className="text-center py-12">
+            <p className="text-gray-500 dark:text-gray-400">No registrations found</p>
+            </GlassCard>
+        ) : (
+            <div className="space-y-4">
+            {registrations?.map((reg: any) => (
+                <GlassCard 
+                key={reg.id} 
+                hover 
+                onClick={() => setSelectedReg(reg)} 
+                className="flex items-center gap-6 cursor-pointer"
+                >
+                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-xl font-bold text-primary">
+                    {reg.name?.charAt(0)?.toUpperCase() || '?'}
+                    </span>
+                </div>
+                <div className="flex-1">
+                    <h3 className="font-semibold dark:text-white">{reg.name}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{reg.course_title}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    {reg.created_at ? new Date(reg.created_at).toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                    }) : 'N/A'}
+                    </p>
+                </div>
+                <div className="text-right">
+                    <p className="font-semibold text-primary mb-2">₹{reg.amount}</p>
+                    {getStatusBadge(reg.status)}
+                </div>
+                <button className="p-2 rounded-full hover:bg-primary/10 transition-colors">
+                    <Eye className="w-5 h-5 text-primary" />
+                </button>
+                </GlassCard>
+            ))}
+            </div>
+        )}
+
+        <RegistrationModal
+            registration={selectedReg}
+            onClose={() => setSelectedReg(null)}
+            onApprove={(id) => approveMutation.mutate(id)}
+            onReject={(id) => rejectMutation.mutate(id)}
+            isLoading={approveMutation.isPending || rejectMutation.isPending}
+        />
+        </div>
+    )
+    }
+
+    interface RegistrationModalProps {
+    registration: any
+    onClose: () => void
+    onApprove: (id: string) => void
+    onReject: (id: string) => void
+    isLoading: boolean
+    }
+
+    const RegistrationModal: React.FC<RegistrationModalProps> = ({
+    registration,
+    onClose,
+    onApprove,
+    onReject,
+    isLoading,
+    }) => {
+    if (!registration) return null
+
+    const imageUrl = registration.screenshot_url 
+        ? `${API_BASE}${registration.screenshot_url}`
+        : null
+
+    return (
+        <GlassModal isOpen={!!registration} onClose={onClose} title="Registration Details">
+        <div className="space-y-6">
+            <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-2xl font-bold text-primary">
+                {registration.name?.charAt(0)?.toUpperCase() || '?'}
+                </span>
+            </div>
+            <div>
+                <h3 className="text-xl font-semibold dark:text-white">{registration.name}</h3>
+                <p className="text-gray-500 dark:text-gray-400">Telegram ID: {registration.telegram_id}</p>
+            </div>
+            </div>
+
+            <div className="space-y-3">
+            <div className="p-4 rounded-xl bg-white/30 dark:bg-black/30">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Address</p>
+                <p className="dark:text-white">{registration.address}</p>
+            </div>
+            <div className="p-4 rounded-xl bg-white/30 dark:bg-black/30">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Course</p>
+                <p className="dark:text-white">{registration.course_title}</p>
+            </div>
+            <div className="p-4 rounded-xl bg-white/30 dark:bg-black/30">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Amount Paid</p>
+                <p className="text-2xl font-bold text-primary">₹{registration.amount}</p>
+            </div>
+            </div>
+
+            {imageUrl && (
+            <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Payment Screenshot</p>
+                <img
+                src={imageUrl}
+                alt="Payment screenshot"
+                className="w-full rounded-xl object-contain max-h-64 bg-gray-100 dark:bg-gray-800"
+                />
+            </div>
+            )}
+
+            {registration.status === 'pending' && (
+            <div className="flex gap-3 pt-4">
+                <button
+                onClick={() => onReject(registration.id)}
+                disabled={isLoading}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-medium hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                <X className="w-5 h-5" />
+                Reject
+                </button>
+                <button
+                onClick={() => onApprove(registration.id)}
+                disabled={isLoading}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                <Check className="w-5 h-5" />
+                Approve
+                </button>
+            </div>
+            )}
+        </div>
+        </GlassModal>
+    )
+    }

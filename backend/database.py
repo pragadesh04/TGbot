@@ -1,0 +1,187 @@
+from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.database import Database
+from dotenv import load_dotenv
+import os
+import logging
+import json
+
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_path)
+
+logger = logging.getLogger(__name__)
+
+
+class MongoDB:
+    client: AsyncIOMotorClient = None
+    db: Database = None
+
+
+db_instance = MongoDB()
+
+
+async def connect_to_mongo():
+    mongo_uri = os.getenv("MONGODB_URI")
+    db_instance.client = AsyncIOMotorClient(mongo_uri)
+    db_instance.db = db_instance.client["CourseBots"]
+    print("Connected to MongoDB")
+
+
+async def close_mongo_connection():
+    if db_instance.client:
+        db_instance.client.close()
+        print("MongoDB connection closed")
+
+
+def get_database() -> Database:
+    return db_instance.db
+
+
+async def get_courses():
+    db = get_database()
+    courses = []
+    cursor = db.courses.find().sort("registration_count", -1)
+    async for course in cursor:
+        course["_id"] = str(course["_id"])
+        courses.append(course)
+    return courses
+
+
+async def get_course_by_id(course_id: str):
+    db = get_database()
+    from bson import ObjectId
+
+    course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    if course:
+        course["_id"] = str(course["_id"])
+    return course
+
+
+async def create_course(course_data: dict):
+    db = get_database()
+    from datetime import datetime
+
+    course_data["registration_count"] = 0
+    course_data["created_at"] = datetime.utcnow()
+    course_data["updated_at"] = datetime.utcnow()
+    result = await db.courses.insert_one(course_data)
+    return str(result.inserted_id)
+
+
+async def update_course(course_id: str, update_data: dict):
+    db = get_database()
+    from bson import ObjectId
+    from datetime import datetime
+
+    update_data["updated_at"] = datetime.utcnow()
+    await db.courses.update_one({"_id": ObjectId(course_id)}, {"$set": update_data})
+
+
+async def delete_course(course_id: str):
+    db = get_database()
+    from bson import ObjectId
+
+    await db.courses.delete_one({"_id": ObjectId(course_id)})
+
+
+async def increment_course_count(course_id: str):
+    db = get_database()
+    from bson import ObjectId
+
+    await db.courses.update_one(
+        {"_id": ObjectId(course_id)}, {"$inc": {"registration_count": 1}}
+    )
+
+
+async def get_registrations(status: str = None):
+    db = get_database()
+    registrations = []
+    query = {}
+    if status:
+        query["status"] = status
+    cursor = db.registrations.find(query).sort("created_at", -1)
+    async for reg in cursor:
+        reg["id"] = str(reg["_id"])
+        reg.pop("_id", None)
+        reg["course_id"] = str(reg["course_id"]) if reg.get("course_id") else None
+        reg['updated_at'] = str(reg['updated_at'] )
+        reg['created_at'] = str(reg['created_at'] )
+        logger.info(f"Registration: {reg}")
+        registrations.append(reg)
+    return registrations
+
+
+async def get_registration_by_id(reg_id: str):
+    db = get_database()
+    from bson import ObjectId
+
+    reg = await db.registrations.find_one({"_id": ObjectId(reg_id)})
+    if reg:
+        reg["id"] = str(reg["_id"])
+        reg.pop("_id", None)
+        reg["course_id"] = str(reg["course_id"]) if reg.get("course_id") else None
+    return reg
+
+
+async def update_registration_status(reg_id: str, status: str):
+    db = get_database()
+    from bson import ObjectId
+    from datetime import datetime
+
+    await db.registrations.update_one(
+        {"_id": ObjectId(reg_id)},
+        {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+    )
+
+
+async def get_config(key: str):
+    db = get_database()
+    config = await db.config.find_one({"key": key})
+    return config["value"] if config else None
+
+
+async def set_config(key: str, value: str):
+    db = get_database()
+    from datetime import datetime
+
+    await db.config.update_one(
+        {"key": key},
+        {"$set": {"value": value, "updated_at": datetime.utcnow()}},
+        upsert=True,
+    )
+
+
+async def get_stats():
+    db = get_database()
+    total = await db.registrations.count_documents({})
+    pending = await db.registrations.count_documents({"status": "pending"})
+    approved = await db.registrations.count_documents({"status": "approved"})
+    rejected = await db.registrations.count_documents({"status": "rejected"})
+    return {
+        "total": total,
+        "pending": pending,
+        "approved": approved,
+        "rejected": rejected,
+    }
+
+
+async def initialize_default_config():
+    db = get_database()
+    existing = await db.config.find_one({"key": "upi_id"})
+    if not existing:
+        await set_config("upi_id", "yourname@upi")
+
+    existing_course = await db.courses.find_one({"title": "Sample Course"})
+    if not existing_course:
+        from datetime import datetime
+
+        await db.courses.insert_one(
+            {
+                "title": "Sample Course",
+                "description": "Description",
+                "fee": 0,
+                "image_url": "https://placehold.co/400x200/ff6699/ffffff?text=Sample+Course",
+                "registration_count": 0,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+        )
