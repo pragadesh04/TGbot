@@ -41,6 +41,7 @@ async def get_courses():
     courses = []
     cursor = db.courses.find().sort("registration_count", -1)
     async for course in cursor:
+        course["id"] = str(course["_id"])
         course["_id"] = str(course["_id"])
         courses.append(course)
     return courses
@@ -52,6 +53,7 @@ async def get_course_by_id(course_id: str):
 
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if course:
+        course["id"] = str(course["_id"])
         course["_id"] = str(course["_id"])
     return course
 
@@ -92,19 +94,34 @@ async def increment_course_count(course_id: str):
     )
 
 
-async def get_registrations(status: str = None):
+async def get_registrations(
+    status: str = None, course: str = None, sort_by: str = None, order: str = "desc"
+):
     db = get_database()
     registrations = []
     query = {}
     if status:
         query["status"] = status
-    cursor = db.registrations.find(query).sort("created_at", -1)
+    if course:
+        query["course_title"] = course
+
+    sort_field = "created_at"
+    sort_order = -1  # descending
+
+    if sort_by == "date":
+        sort_field = "created_at"
+        sort_order = -1 if order == "desc" else 1
+    elif sort_by == "amount":
+        sort_field = "amount"
+        sort_order = -1 if order == "desc" else 1
+
+    cursor = db.registrations.find(query).sort(sort_field, sort_order)
     async for reg in cursor:
         reg["id"] = str(reg["_id"])
         reg.pop("_id", None)
         reg["course_id"] = str(reg["course_id"]) if reg.get("course_id") else None
-        reg['updated_at'] = str(reg['updated_at'] )
-        reg['created_at'] = str(reg['created_at'] )
+        reg["updated_at"] = str(reg["updated_at"])
+        reg["created_at"] = str(reg["created_at"])
         logger.info(f"Registration: {reg}")
         registrations.append(reg)
     return registrations
@@ -122,14 +139,20 @@ async def get_registration_by_id(reg_id: str):
     return reg
 
 
-async def update_registration_status(reg_id: str, status: str):
+async def update_registration_status(
+    reg_id: str, status: str, rejection_reason: str = None
+):
     db = get_database()
     from bson import ObjectId
     from datetime import datetime
 
+    update_data = {"status": status, "updated_at": datetime.utcnow()}
+    if rejection_reason:
+        update_data["rejection_reason"] = rejection_reason
+
     await db.registrations.update_one(
         {"_id": ObjectId(reg_id)},
-        {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+        {"$set": update_data},
     )
 
 
@@ -179,7 +202,7 @@ async def initialize_default_config():
                 "title": "Sample Course",
                 "description": "Description",
                 "fee": 0,
-                "image_url": "https://placehold.co/400x200/ff6699/ffffff?text=Sample+Course",
+                "image_url": "https://placehold.co/400x200/transparent/white?text=Sample+Course&font=Poppins",
                 "registration_count": 0,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),

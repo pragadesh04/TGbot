@@ -1,11 +1,30 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from database import get_courses, get_course_by_id
+from database import (
+    get_courses,
+    get_course_by_id,
+    get_latest_user_info,
+    get_registered_course_titles,
+)
+
+
+def format_duration_hours(hours: float) -> str:
+    if not hours:
+        return "N/A"
+    h = int(hours)
+    m = int((hours - h) * 60)
+    if h == 0:
+        return f"{m} Minutes"
+    elif m == 0:
+        return f"{h} Hour{'s' if h > 1 else ''}"
+    else:
+        return f"{h} Hour{'s' if h > 1 else ''} {m} Minutes"
 
 
 REGISTRATION_STEPS = {
     "name": "Enter your FULL NAME:",
     "address": "Enter your ADDRESS:",
+    "mobile": "Enter your MOBILE NUMBER:",
     "course": "Select a course:",
     "payment": "Payment",
 }
@@ -16,14 +35,88 @@ async def register_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    context.user_data["in_registration"] = True
-    context.user_data["in_query_mode"] = False
-    context.user_data["registration_step"] = "name"
+    user_id = update.effective_user.id
+    existing_info = await get_latest_user_info(user_id)
 
-    await query.edit_message_text(
-        text="📝 *Registration Started!*\n\n" + REGISTRATION_STEPS["name"],
-        parse_mode="Markdown",
-    )
+    if existing_info and existing_info.get("name") and existing_info.get("address"):
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Use Same Details", callback_data="use_same_details_yes"
+                ),
+                InlineKeyboardButton(
+                    "✏️ Enter New Details", callback_data="use_same_details_no"
+                ),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mobile_text = (
+            f"\n• Mobile: *{existing_info['mobile']}*"
+            if existing_info.get("mobile")
+            else ""
+        )
+        await query.edit_message_text(
+            text=(
+                f"📝 *Registration Started!*\n\n"
+                f"We found your previous registration details:\n"
+                f"• Name: *{existing_info['name']}*\n"
+                f"• Address: *{existing_info['address']}*"
+                f"{mobile_text}\n\n"
+                f"Would you like to use the same details?"
+            ),
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+        )
+    else:
+        context.user_data["in_registration"] = True
+        context.user_data["in_query_mode"] = False
+        context.user_data["registration_step"] = "name"
+        context.user_data["use_same_details"] = False
+
+        await query.edit_message_text(
+            text="📝 *Registration Started!*\n\n" + REGISTRATION_STEPS["name"],
+            parse_mode="Markdown",
+        )
+
+
+async def use_same_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle use same details confirmation"""
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+
+    user_id = update.effective_user.id
+    existing_info = await get_latest_user_info(user_id)
+
+    if data == "use_same_details_yes" and existing_info:
+        context.user_data["in_registration"] = True
+        context.user_data["in_query_mode"] = False
+        context.user_data["reg_name"] = existing_info["name"]
+        context.user_data["reg_address"] = existing_info["address"]
+        context.user_data["reg_mobile"] = existing_info.get("mobile", "")
+        context.user_data["reg_telegram_id"] = user_id
+        context.user_data["use_same_details"] = True
+        context.user_data["registration_step"] = "course"
+
+        details_text = f"✅ *Using same details:*\n• Name: *{existing_info['name']}*\n• Address: *{existing_info['address']}*"
+        if existing_info.get("mobile"):
+            details_text += f"\n• Mobile: *{existing_info['mobile']}*"
+
+        await query.edit_message_text(
+            text=f"{details_text}\n\n📚 *{REGISTRATION_STEPS['course']}*\n\nSelect a course to continue.",
+            parse_mode="Markdown",
+        )
+        await show_course_selection(update, context)
+    else:
+        context.user_data["in_registration"] = True
+        context.user_data["in_query_mode"] = False
+        context.user_data["registration_step"] = "name"
+        context.user_data["use_same_details"] = False
+
+        await query.edit_message_text(
+            text="📝 *Registration Started!*\n\n" + REGISTRATION_STEPS["name"],
+            parse_mode="Markdown",
+        )
 
 
 async def handle_registration_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,6 +138,16 @@ async def handle_registration_input(update: Update, context: ContextTypes.DEFAUL
 
     elif step == "address":
         context.user_data["reg_address"] = text
+        context.user_data["registration_step"] = "mobile"
+        await update.message.reply_text(
+            f"✅ Address saved: *{text}*\n\n" + REGISTRATION_STEPS["mobile"],
+            parse_mode="Markdown",
+        )
+        return True
+
+    elif step == "mobile":
+        context.user_data["reg_mobile"] = text
+        context.user_data["reg_telegram_id"] = update.effective_user.id
         context.user_data["registration_step"] = "course"
         await show_course_selection(update, context)
         return True
@@ -56,8 +159,26 @@ async def handle_registration_input(update: Update, context: ContextTypes.DEFAUL
 
 
 async def show_course_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show course selection with top 5 and 'See All' option"""
+    """Show course selection with top 5 and 'See All' option, filtering already registered courses"""
     courses = await get_courses()
+
+    telegram_id = context.user_data.get("reg_telegram_id")
+    if telegram_id:
+        registered_titles = await get_registered_course_titles(telegram_id)
+        courses = [c for c in courses if c.get("title") not in registered_titles]
+
+    if not courses:
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text="📚 *No courses available for registration.*\n\nAll courses are either already registered or registration is closed.",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                text="📚 *No courses available for registration.*\n\nAll courses are either already registered or registration is closed.",
+                parse_mode="Markdown",
+            )
+        return
 
     keyboard = []
 
@@ -85,9 +206,9 @@ async def show_course_selection(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     header = (
-        f"✅ Address saved: *{context.user_data.get('reg_address', 'N/A')}*\n\n"
+        f"✅ Details saved!\n\n"
         f"📚 *{REGISTRATION_STEPS['course']}*\n\n"
-        f"*Top {len(top_5)} Popular Courses:*\n"
+        f"*Available Courses:*\n"
         f"(Enter the number to select)\n\n"
     )
 
@@ -102,18 +223,28 @@ async def show_course_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def show_all_courses(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show all courses"""
+    """Show all courses, filtering already registered courses"""
     query = update.callback_query
     await query.answer()
 
     courses = await get_courses()
 
+    telegram_id = context.user_data.get("reg_telegram_id")
+    if telegram_id:
+        registered_titles = await get_registered_course_titles(telegram_id)
+        courses = [c for c in courses if c.get("title") not in registered_titles]
+
     keyboard = []
     for i, course in enumerate(courses):
+        course_type = course.get("course_type", "recorded")
+        type_emoji = "🔴" if course_type == "live" else "📼"
+
+        button_text = f"{i + 1}. {type_emoji} {course['title']} (₹{course['fee']})"
+
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    f"{i + 1}. {course['title']} (₹{course['fee']})",
+                    button_text,
                     callback_data=f"course_select_{course['_id']}",
                 )
             ]
@@ -127,7 +258,9 @@ async def show_all_courses(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     course_list = "\n".join(
         [
-            f"{i + 1}. {c['title']} - ₹{c['fee']} ({c['registration_count']} registered)"
+            f"{i + 1}. {('🔴 ' if c.get('course_type') == 'live' else '📼 ')}{c['title']} - ₹{c['fee']}"
+            f"{' (' + format_duration_hours(c['duration']) + ')' if c.get('duration') and c.get('course_type') == 'live' else ''}"
+            f" ({c['registration_count']} registered)"
             for i, c in enumerate(courses)
         ]
     )

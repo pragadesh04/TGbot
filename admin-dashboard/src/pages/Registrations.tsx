@@ -1,20 +1,41 @@
-    import { useState } from 'react'
-    import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-    import { Filter, Eye, Check, X, Clock, CheckCircle, XCircle } from 'lucide-react'
-    import { GlassCard } from '../components/GlassCard'
-    import { GlassModal } from '../components/GlassModal'
-    import { api } from '../lib/api'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Filter, Eye, Check, X, Clock, CheckCircle, XCircle, Search, SortAsc } from 'lucide-react'
+import { GlassCard } from '../components/GlassCard'
+import { GlassModal } from '../components/GlassModal'
+import { api } from '../lib/api'
 
-    const API_BASE = 'http://localhost:8000'
+const API_BASE = 'http://localhost:8000'
 
-    export const Registrations: React.FC = () => {
+const REJECTION_REASONS = [
+    'Fake screenshot',
+    'Registration closed',
+    'Seat filled',
+    'Invalid details',
+    'Duplicate registration'
+]
+
+export const Registrations: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState<string>('')
+    const [courseFilter, setCourseFilter] = useState<string>('')
+    const [sortBy, setSortBy] = useState<string>('')
+    const [sortOrder, setSortOrder] = useState<string>('desc')
     const [selectedReg, setSelectedReg] = useState<any>(null)
     const queryClient = useQueryClient()
 
+    const { data: courses } = useQuery({
+        queryKey: ['courses'],
+        queryFn: () => api.getCourses(),
+    })
+
     const { data: registrations, isLoading } = useQuery({
-        queryKey: ['registrations', statusFilter],
-        queryFn: () => api.getRegistrations(statusFilter || undefined),
+        queryKey: ['registrations', statusFilter, courseFilter, sortBy, sortOrder],
+        queryFn: () => api.getRegistrations(
+            statusFilter || undefined,
+            courseFilter || undefined,
+            sortBy || undefined,
+            sortOrder || undefined
+        ),
         refetchInterval: 30000,
     })
 
@@ -26,14 +47,23 @@
         queryClient.invalidateQueries({ queryKey: ['stats'] })
         setSelectedReg(null)
         },
+        onError: (error) => {
+        alert('Failed to approve registration. Please try again.')
+        console.error(error)
+        },
     })
 
     const rejectMutation = useMutation({
-        mutationFn: api.rejectRegistration,
+        mutationFn: ({ id, reason }: { id: string; reason?: string }) => 
+            api.rejectRegistration(id, reason),
         onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['registrations'] })
         queryClient.invalidateQueries({ queryKey: ['stats'] })
         setSelectedReg(null)
+        },
+        onError: (error) => {
+        alert('Failed to reject registration. Please try again.')
+        console.error(error)
         },
     })
 
@@ -59,20 +89,52 @@
 
     return (
         <div>
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
             <h1 className="text-3xl font-bold dark:text-white">Registrations</h1>
+            <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-            <Filter className="w-5 h-5 text-gray-500" />
+                <Filter className="w-4 h-4 text-gray-500" />
+                <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="input-field w-auto"
+                >
+                    <option value="">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                </select>
+            </div>
             <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
+                value={courseFilter}
+                onChange={(e) => setCourseFilter(e.target.value)}
                 className="input-field w-auto"
             >
-                <option value="">All</option>
-                <option value="pending">Pending</option>
-                <option value="approved">Approved</option>
-                <option value="rejected">Rejected</option>
+                <option value="">All Courses</option>
+                {courses?.map((course: any) => (
+                    <option key={course.id} value={course.title}>{course.title}</option>
+                ))}
             </select>
+            <div className="flex items-center gap-2">
+                <SortAsc className="w-4 h-4 text-gray-500" />
+                <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="input-field w-auto"
+                >
+                    <option value="">Sort By</option>
+                    <option value="date">Date</option>
+                    <option value="amount">Amount</option>
+                </select>
+                <select
+                    value={sortOrder}
+                    onChange={(e) => setSortOrder(e.target.value)}
+                    className="input-field w-auto"
+                >
+                    <option value="desc">Newest/High</option>
+                    <option value="asc">Oldest/Low</option>
+                </select>
+            </div>
             </div>
         </div>
 
@@ -129,7 +191,7 @@
             registration={selectedReg}
             onClose={() => setSelectedReg(null)}
             onApprove={(id) => approveMutation.mutate(id)}
-            onReject={(id) => rejectMutation.mutate(id)}
+            onReject={(id, reason) => rejectMutation.mutate({ id, reason })}
             isLoading={approveMutation.isPending || rejectMutation.isPending}
         />
         </div>
@@ -140,7 +202,7 @@
     registration: any
     onClose: () => void
     onApprove: (id: string) => void
-    onReject: (id: string) => void
+    onReject: (id: string, reason?: string) => void
     isLoading: boolean
     }
 
@@ -151,7 +213,20 @@
     onReject,
     isLoading,
     }) => {
+    const [showRejectDropdown, setShowRejectDropdown] = useState(false)
+    const [selectedReason, setSelectedReason] = useState('')
+
     if (!registration) return null
+
+    const handleReject = () => {
+        if (selectedReason) {
+            onReject(registration.id, selectedReason)
+            setShowRejectDropdown(false)
+            setSelectedReason('')
+        } else {
+            setShowRejectDropdown(true)
+        }
+    }
 
     const imageUrl = registration.screenshot_url 
         ? `${API_BASE}${registration.screenshot_url}`
@@ -173,6 +248,12 @@
             </div>
 
             <div className="space-y-3">
+            {registration.mobile && (
+                <div className="p-4 rounded-xl bg-white/30 dark:bg-black/30">
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Mobile</p>
+                    <p className="dark:text-white">{registration.mobile}</p>
+                </div>
+            )}
             <div className="p-4 rounded-xl bg-white/30 dark:bg-black/30">
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Address</p>
                 <p className="dark:text-white">{registration.address}</p>
@@ -185,6 +266,12 @@
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Amount Paid</p>
                 <p className="text-2xl font-bold text-primary">₹{registration.amount}</p>
             </div>
+            {registration.rejection_reason && (
+                <div className="p-4 rounded-xl bg-red-50 dark:bg-red-900/20">
+                    <p className="text-sm text-red-500 dark:text-red-400 mb-1">Rejection Reason</p>
+                    <p className="dark:text-white">{registration.rejection_reason}</p>
+                </div>
+            )}
             </div>
 
             {imageUrl && (
@@ -199,23 +286,37 @@
             )}
 
             {registration.status === 'pending' && (
-            <div className="flex gap-3 pt-4">
-                <button
-                onClick={() => onReject(registration.id)}
-                disabled={isLoading}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-medium hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                <X className="w-5 h-5" />
-                Reject
-                </button>
-                <button
-                onClick={() => onApprove(registration.id)}
-                disabled={isLoading}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                <Check className="w-5 h-5" />
-                Approve
-                </button>
+            <div className="space-y-3">
+                {showRejectDropdown && (
+                    <select
+                        value={selectedReason}
+                        onChange={(e) => setSelectedReason(e.target.value)}
+                        className="input-field w-full"
+                    >
+                        <option value="">Select rejection reason...</option>
+                        {REJECTION_REASONS.map((reason) => (
+                            <option key={reason} value={reason}>{reason}</option>
+                        ))}
+                    </select>
+                )}
+                <div className="flex gap-3 pt-2">
+                    <button
+                        onClick={handleReject}
+                        disabled={isLoading}
+                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-medium hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                        <X className="w-5 h-5" />
+                        {showRejectDropdown ? 'Confirm Reject' : 'Reject'}
+                    </button>
+                    <button
+                        onClick={() => onApprove(registration.id)}
+                        disabled={isLoading}
+                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-medium hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                        <Check className="w-5 h-5" />
+                        Approve
+                    </button>
+                </div>
             </div>
             )}
         </div>

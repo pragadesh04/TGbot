@@ -40,7 +40,7 @@ async def create_course(course: CourseCreate):
     course_dict = course.model_dump()
     if not course_dict.get("image_url"):
         course_dict["image_url"] = (
-            f"https://placehold.co/400x200/ff6699/ffffff?text={course_dict['title'].replace(' ', '+')}"
+            f"https://placehold.co/400x200/transparent/white?text={course_dict['title'].replace(' ', '+')}&font=Poppins"
         )
     course_id = await database.create_course(course_dict)
     return {"id": course_id, "message": "Course created successfully"}
@@ -69,9 +69,31 @@ async def delete_course(course_id: str):
     return {"message": "Course deleted successfully"}
 
 
+@router.put("/courses/{course_id}/toggle-registration")
+async def toggle_course_registration(course_id: str):
+    """Toggle registration open/closed status for a course"""
+    existing = await database.get_course_by_id(course_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    current_status = existing.get("registration_open", True)
+    new_status = not current_status
+    await database.update_course(course_id, {"registration_open": new_status})
+    status_text = "opened" if new_status else "closed"
+    return {
+        "message": f"Registration {status_text} successfully",
+        "registration_open": new_status,
+    }
+
+
 @router.get("/registrations", response_model=List[RegistrationResponse])
-async def list_registrations(status: Optional[str] = None):
-    return await database.get_registrations(status)
+async def list_registrations(
+    status: Optional[str] = None,
+    course: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    order: Optional[str] = "desc",
+):
+    return await database.get_registrations(status, course, sort_by, order)
 
 
 @router.get("/registrations/{registration_id}", response_model=RegistrationResponse)
@@ -97,12 +119,12 @@ async def approve_registration(registration_id: str):
 
 
 @router.put("/registrations/{registration_id}/reject")
-async def reject_registration(registration_id: str):
+async def reject_registration(registration_id: str, reason: str = None):
     reg = await database.get_registration_by_id(registration_id)
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
 
-    await database.update_registration_status(registration_id, "rejected")
+    await database.update_registration_status(registration_id, "rejected", reason)
     return {"message": "Registration rejected"}
 
 

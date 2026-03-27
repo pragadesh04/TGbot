@@ -37,6 +37,17 @@ def get_database() -> Database:
 async def get_courses():
     db = get_database()
     courses = []
+    cursor = db.courses.find({"registration_open": True}).sort("registration_count", -1)
+    async for course in cursor:
+        course["_id"] = str(course["_id"])
+        courses.append(course)
+    return courses
+
+
+async def get_all_courses():
+    """Get all courses including ones with registration closed (for admin/filtering)."""
+    db = get_database()
+    courses = []
     cursor = db.courses.find().sort("registration_count", -1)
     async for course in cursor:
         course["_id"] = str(course["_id"])
@@ -113,6 +124,43 @@ async def get_registration_by_telegram_id(telegram_id: int):
         reg["_id"] = str(reg["_id"])
         reg["course_id"] = str(reg["course_id"]) if reg.get("course_id") else None
     return reg
+
+
+async def get_registrations_by_telegram_id(telegram_id: int):
+    """Get ALL registrations for a user (supports multiple course registrations)."""
+    db = get_database()
+    registrations = []
+    cursor = db.registrations.find({"telegram_id": telegram_id}).sort("created_at", -1)
+    async for reg in cursor:
+        reg["_id"] = str(reg["_id"])
+        reg["course_id"] = str(reg["course_id"]) if reg.get("course_id") else None
+        registrations.append(reg)
+    return registrations
+
+
+async def get_latest_user_info(telegram_id: int):
+    """Get the most recent name, address and mobile for a user."""
+    db = get_database()
+    reg = await db.registrations.find_one(
+        {"telegram_id": telegram_id}, {"name": 1, "address": 1, "mobile": 1}
+    )
+    if reg:
+        return {
+            "name": reg.get("name"),
+            "address": reg.get("address"),
+            "mobile": reg.get("mobile"),
+        }
+    return None
+
+
+async def get_registered_course_titles(telegram_id: int):
+    """Get course titles user has pending or approved registration for."""
+    db = get_database()
+    registrations = await db.registrations.find(
+        {"telegram_id": telegram_id, "status": {"$in": ["pending", "approved"]}},
+        {"course_title": 1},
+    ).to_list(length=None)
+    return [r.get("course_title") for r in registrations]
 
 
 async def create_registration(reg_data: dict):
@@ -211,7 +259,7 @@ async def initialize_default_config():
                 "title": "Sample Course",
                 "description": "Description",
                 "fee": 0,
-                "image_url": "https://placehold.co/400x200/ff6699/ffffff?text=Sample+Course",
+                "image_url": "https://placehold.co/400x200/transparent?text=Sample+Course&font=Poppins",
                 "registration_count": 0,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),

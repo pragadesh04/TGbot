@@ -8,6 +8,12 @@ class CourseBase(BaseModel):
     description: str
     fee: float
     image_url: Optional[str] = None
+    course_type: str = "recorded"
+    start_date: Optional[str] = None
+    start_time: Optional[str] = None
+    sessions: Optional[int] = None
+    duration: Optional[float] = None
+    registration_open: bool = True
 
 
 class CourseCreate(CourseBase):
@@ -19,9 +25,16 @@ class CourseUpdate(BaseModel):
     description: Optional[str] = None
     fee: Optional[float] = None
     image_url: Optional[str] = None
+    course_type: Optional[str] = None
+    start_date: Optional[str] = None
+    start_time: Optional[str] = None
+    sessions: Optional[int] = None
+    duration: Optional[float] = None
+    registration_open: Optional[bool] = None
 
 
 class CourseResponse(CourseBase):
+    id: str
     _id: str
     registration_count: int = 0
     created_at: Optional[datetime] = None
@@ -36,11 +49,13 @@ class RegistrationResponse(BaseModel):
     telegram_id: int
     name: str
     address: str
+    mobile: Optional[str] = None
     course_id: Optional[str] = None
     course_title: str
     amount: float
     screenshot_url: Optional[str] = None
     status: str
+    rejection_reason: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -4,6 +4,7 @@ from database import get_config, create_registration
 from utils import generate_qr_code
 from bson import ObjectId
 import os
+import tempfile
 
 
 async def start_payment_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -13,11 +14,21 @@ async def start_payment_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     address = context.user_data.get("reg_address")
 
     upi_id = await get_config("upi_id") or "yourname@upi"
-    amount = course.get("fee", 0)
+    amount = course.get("fee") or course.get("price") or course.get("amount") or 0
+    amount = float(amount) if amount else 0.0
 
     context.user_data["registration_step"] = "waiting_screenshot"
+    context.user_data["payment_amount"] = amount
 
     qr_base64 = generate_qr_code(upi_id, amount)
+
+    # Save QR to temp file
+    import base64
+
+    qr_bytes = base64.b64decode(qr_base64)
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp.write(qr_bytes)
+        tmp_path = tmp.name
 
     course_info = (
         f"✅ *Course Selected:*\n"
@@ -38,7 +49,7 @@ async def start_payment_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await context.bot.send_photo(
         chat_id=chat_id,
-        photo=f"data:image/png;base64,{qr_base64}",
+        photo=open(tmp_path, "rb"),
         caption=f"Scan QR code to pay ₹{amount}",
     )
 
@@ -77,6 +88,7 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     course = context.user_data.get("selected_course")
     name = context.user_data.get("reg_name")
     address = context.user_data.get("reg_address")
+    mobile = context.user_data.get("reg_mobile", "")
     amount = context.user_data.get("payment_amount", 0)
 
     screenshot_url = f"/uploads/screenshots/{filename}"
@@ -85,6 +97,7 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "telegram_id": user_id,
         "name": name,
         "address": address,
+        "mobile": mobile,
         "course_id": ObjectId(course["_id"])
         if isinstance(course.get("_id"), str)
         else course.get("_id"),
@@ -102,7 +115,7 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ *Screenshot Received!*\n\n"
         "Your registration is pending review.\n"
-        "We'll notify you once approved.",
+        "Manual Verification on process",
         parse_mode="Markdown",
     )
 
